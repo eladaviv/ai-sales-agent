@@ -66,7 +66,7 @@ src/
 npm install
 
 # 2. Configure environment
-cp .env.local.example .env.local
+create .env.local file
 # Fill in ANTHROPIC_API_KEY and MONDAY_API_KEY
 
 # 3. Run dev server
@@ -131,9 +131,9 @@ Each enrichment function has a comment explaining the real API call:
 
 ---
 
-## n8n Workflows
+<!-- ## n8n Workflows
 
 Import the 3 JSON files from `n8n-flows/` into your n8n instance:
 - `01-lead-captured-enrichment.json` — Clearbit → Hunter → monday CRM → Slack
 - `02-call-notes-board.json` — Update lead + create board
-- `03-payment-deal-won.json` — Stripe payment link → SendGrid → deal won → Slack
+- `03-payment-deal-won.json` — Stripe payment link → SendGrid → deal won → Slack -->
