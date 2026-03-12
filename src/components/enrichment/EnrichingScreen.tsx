@@ -35,7 +35,11 @@ export function EnrichingScreen({ email, name, onComplete }: EnrichingScreenProp
       setTimeout(() => {
         setActiveStep(step.id);
         setTimeout(() => {
-          setDoneSteps((prev) => new Set([...prev, step.id]));
+          setDoneSteps((prev) => {
+            const next = new Set(prev);
+            next.add(step.id);
+            return next;
+          });
         }, 450);
       }, step.delayMs);
     });

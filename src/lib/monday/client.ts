@@ -33,17 +33,19 @@ async function mondayQuery<T = unknown>(
 }
 
 // ─── Create board ─────────────────────────────────────────────────────────────
-async function createBoard(name: string): Promise<string> {
+async function createBoard(name: string): Promise<{boardId: string, boardUrl: string}> {
+  // i wanted to use share board kind, but i don't have permissions
   const query = `
     mutation CreateBoard($name: String!) {
       create_board(board_name: $name, board_kind: public) {
-        id
+        id,
+        url
       }
     }
   `;
 
-  const data = await mondayQuery<{ create_board: { id: string } }>(query, { name });
-  return data.create_board.id;
+  const data = await mondayQuery<{ create_board: { id: string, url: string } }>(query, { name });
+  return { boardId: data.create_board.id, boardUrl: data.create_board.url };
 }
 
 // ─── Create group within board ────────────────────────────────────────────────
@@ -107,7 +109,7 @@ export async function createMondayBoard(
 ): Promise<MondayBoardCreationResult> {
   try {
     // 1. Create the board
-    const boardId = await createBoard(config.boardName);
+    const {boardId, boardUrl} = await createBoard(config.boardName);
 
     // 2. Create all groups and map name → id
     const groupMap: Record<string, string> = {};
@@ -124,8 +126,6 @@ export async function createMondayBoard(
       await createItem(boardId, groupId, item);
       itemsCreated++;
     }
-
-    const boardUrl = `https://monday.com/boards/${boardId}`;
 
     return {
       boardId,
