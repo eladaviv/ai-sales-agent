@@ -1,28 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { enrichLead } from "@/lib/enrichment";
-import { fireN8nEvent } from "@/lib/n8n/client";
-import { N8N_EVENTS } from "@/constants";
+import { setLeadStatus, writeEnrichmentData } from "@/lib/monday/leads";
 
 export async function POST(req: NextRequest) {
   try {
-    const { email, name } = (await req.json()) as { email: string; name: string };
+    const body = await req.json();
+    const { email, firstName, lastName, companyName, mondayItemId } = body as {
+      email: string; firstName: string; lastName: string;
+      companyName: string; mondayItemId: string;
+    };
 
-    if (!email || !name) {
-      return NextResponse.json({ error: "email and name are required" }, { status: 400 });
+    if (!email || !firstName || !lastName || !companyName) {
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    const profile = await enrichLead(email, name);
+    // 1. Mark status → Enrichment on the monday board immediately
+    await setLeadStatus(mondayItemId ?? "", "Enrichment");
 
-    // Fire n8n lead-captured workflow (non-blocking)
-    void fireN8nEvent(N8N_EVENTS.LEAD_CAPTURED, {
-      email,
-      name,
-      company:    profile.company.name,
-      industry:   profile.company.industry,
-      employees:  profile.company.employees,
-      leadScore:  profile.meta.leadScore,
-      plan:       profile.recommendation.plan,
-    });
+    // 2. Run Explorium enrichment (falls back to mocks automatically)
+    const profile = await enrichLead(email, firstName, lastName, companyName, mondayItemId ?? "");
+
+    // 3. Write all enrichment data back to the monday board item
+    await writeEnrichmentData(mondayItemId ?? "", profile);
 
     return NextResponse.json(profile);
   } catch (error) {

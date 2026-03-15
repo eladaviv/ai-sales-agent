@@ -1,25 +1,27 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type { AppScreen, EnrichmentResult, ChatMessage } from "@/types";
+import type { AppScreen, EnrichmentResult, ChatMessage, LeadFormData, MondayLeadItem } from "@/types";
 import { IntakeScreen }    from "@/components/intake/IntakeScreen";
 import { EnrichingScreen } from "@/components/enrichment/EnrichingScreen";
 import { ChatScreen }      from "@/components/chat/ChatScreen";
 
 export default function Home() {
-  const [screen, setScreen]   = useState<AppScreen>("intake");
-  const [profile, setProfile] = useState<EnrichmentResult | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [screen, setScreen]         = useState<AppScreen>("intake");
+  const [form, setForm]             = useState<LeadFormData | null>(null);
+  const [mondayItem, setMondayItem] = useState<MondayLeadItem | null>(null);
+  const [profile, setProfile]       = useState<EnrichmentResult | null>(null);
+  const [messages, setMessages]     = useState<ChatMessage[]>([]);
+
+  const handleIntakeSubmit = useCallback((f: LeadFormData, m: MondayLeadItem) => {
+    setForm(f);
+    setMondayItem(m);
+    setScreen("enriching");
+  }, []);
 
   const handleEnrichmentComplete = useCallback((enriched: EnrichmentResult) => {
     setProfile(enriched);
     setScreen("chat");
-  }, []);
-
-  const handleIntakeSubmit = useCallback((email: string, name: string) => {
-    setScreen("enriching");
-    // Store form data so EnrichingScreen can run enrichment
-    setProfile({ person: { name, email } } as unknown as EnrichmentResult);
   }, []);
 
   return (
@@ -27,10 +29,10 @@ export default function Home() {
       {screen === "intake" && (
         <IntakeScreen onSubmit={handleIntakeSubmit} />
       )}
-      {screen === "enriching" && profile && (
+      {screen === "enriching" && form && mondayItem && (
         <EnrichingScreen
-          email={profile.person.email}
-          name={profile.person.name}
+          form={form}
+          mondayItemId={mondayItem.itemId}
           onComplete={handleEnrichmentComplete}
         />
       )}

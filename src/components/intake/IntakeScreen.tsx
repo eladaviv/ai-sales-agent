@@ -1,29 +1,75 @@
 "use client";
 
-import { useState, type KeyboardEvent } from "react";
-import { Dot } from "@/components/shared/Atoms";
+import { useState, useCallback, type KeyboardEvent } from "react";
+import type { LeadFormData, MondayLeadItem } from "@/types";
+import { Dot, Spinner } from "@/components/shared/Atoms";
 
 interface IntakeScreenProps {
-  onSubmit: (email: string, name: string) => void;
+  onSubmit: (form: LeadFormData, mondayItem: MondayLeadItem) => void;
 }
 
-const TRUST_SIGNALS = [
-  "Clearbit enrichment",
-  "LinkedIn data",
-  "ZoomInfo intent",
-  "AI-powered chat",
-];
+const FIELDS = [
+  { key: "firstName",   label: "First name",  placeholder: "Alex",             type: "text",  autoComplete: "given-name"   },
+  { key: "lastName",    label: "Last name",   placeholder: "Johnson",          type: "text",  autoComplete: "family-name"  },
+  { key: "email",       label: "Work email",  placeholder: "alex@company.com", type: "email", autoComplete: "email"        },
+  { key: "phone",       label: "Phone",       placeholder: "+1 555 000 0000",  type: "tel",   autoComplete: "tel"          },
+  { key: "companyName", label: "Company",     placeholder: "Acme Inc.",        type: "text",  autoComplete: "organization" },
+] as const;
+
+type FieldKey = typeof FIELDS[number]["key"];
 
 export function IntakeScreen({ onSubmit }: IntakeScreenProps) {
-  const [name, setName]       = useState("");
-  const [email, setEmail]     = useState("");
-  const [focused, setFocused] = useState<"name" | "email" | null>(null);
+  const [form, setForm]     = useState<Record<FieldKey, string>>({
+    firstName: "", lastName: "", email: "", phone: "", companyName: "",
+  });
+  const [focused, setFocused]     = useState<FieldKey | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError]         = useState<string | null>(null);
 
-  const isValid = name.trim().length > 1 && email.includes("@") && email.includes(".");
+  const isValid =
+    form.firstName.trim().length > 1 &&
+    form.lastName.trim().length > 1 &&
+    form.email.includes("@") && form.email.includes(".") &&
+    form.phone.trim().length >= 7 &&
+    form.companyName.trim().length > 1;
 
-  function handleSubmit() {
-    if (isValid) onSubmit(email.trim(), name.trim());
-  }
+  const handleSubmit = useCallback(async () => {
+    if (!isValid || submitting) return;
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      // Create monday.com CRM item immediately — before enrichment starts
+      const res = await fetch("/api/intake", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          firstName:   form.firstName.trim(),
+          lastName:    form.lastName.trim(),
+          email:       form.email.trim(),
+          phone:       form.phone.trim(),
+          companyName: form.companyName.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to create lead");
+
+      onSubmit(
+        {
+          firstName:   form.firstName.trim(),
+          lastName:    form.lastName.trim(),
+          email:       form.email.trim(),
+          phone:       form.phone.trim(),
+          companyName: form.companyName.trim(),
+        },
+        data.mondayItem,
+      );
+    } catch (err) {
+      setError((err as Error).message);
+      setSubmitting(false);
+    }
+  }, [form, isValid, submitting, onSubmit]);
 
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === "Enter" && isValid) handleSubmit();
@@ -44,16 +90,12 @@ export function IntakeScreen({ onSubmit }: IntakeScreenProps) {
         <div className="intake__logo">
           <div className="intake__logo-mark">m</div>
           <div>
-            <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: -0.3 }}>
-              monday.com
-            </div>
-            <div className="label" style={{ marginTop: 2 }}>
-              AI Sales Concierge
-            </div>
+            <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: -0.3 }}>monday.com</div>
+            <div className="label" style={{ marginTop: 2 }}>AI Sales Concierge</div>
           </div>
         </div>
 
-        {/* Hero copy */}
+        {/* Hero */}
         <div className="intake__hero">
           <h1>
             Meet Maya.<br />
@@ -61,55 +103,57 @@ export function IntakeScreen({ onSubmit }: IntakeScreenProps) {
             who you are.
           </h1>
           <p>
-            Leave your details. Maya will research your company in seconds, then
-            open a personalised chat — already knowing your team size, your
-            tech stack, and what you need most.
+            Leave your details. Maya will research your company, then open a
+            personalised chat — knowing your team size, your stack, and what
+            you actually need.
           </p>
         </div>
 
         {/* Form */}
         <div className="intake__form">
-          {(
-            [
-              { key: "name",  label: "Your name",  placeholder: "Alex Johnson",     type: "text",  value: name,  setter: setName  },
-              { key: "email", label: "Work email",  placeholder: "alex@company.com", type: "email", value: email, setter: setEmail },
-            ] as const
-          ).map(({ key, label, placeholder, type, value, setter }) => (
+          {FIELDS.map(({ key, label, placeholder, type, autoComplete }) => (
             <div key={key}>
-              <div
-                className={`intake__field-label${focused === key ? " intake__field-label--focused" : ""}`}
-              >
+              <div className={`intake__field-label${focused === key ? " intake__field-label--focused" : ""}`}>
                 {label}
               </div>
               <input
                 type={type}
-                value={value}
+                value={form[key]}
                 placeholder={placeholder}
+                autoComplete={autoComplete}
                 className="intake__input"
-                onChange={(e) => setter(e.target.value)}
+                disabled={submitting}
+                onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                 onFocus={() => setFocused(key)}
                 onBlur={() => setFocused(null)}
                 onKeyDown={handleKeyDown}
-                autoComplete={key === "name" ? "name" : "email"}
               />
             </div>
           ))}
         </div>
 
+        {error && (
+          <div style={{ padding: "10px 14px", borderRadius: 8, background: "rgba(255,71,87,0.1)", border: "1px solid rgba(255,71,87,0.3)", color: "var(--red)", fontSize: 13, marginBottom: 12 }}>
+            {error}
+          </div>
+        )}
+
         <button
           onClick={handleSubmit}
-          disabled={!isValid}
-          className={`intake__submit${isValid ? " intake__submit--active" : " intake__submit--disabled"}`}
+          disabled={!isValid || submitting}
+          className={`intake__submit${isValid && !submitting ? " intake__submit--active" : " intake__submit--disabled"}`}
         >
-          Start my demo →
+          {submitting
+            ? <span style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+                <Spinner size={16} color="#fff" /> Creating your lead…
+              </span>
+            : "Start my demo →"}
         </button>
 
-        {/* Trust signals */}
         <div className="intake__trust">
-          {TRUST_SIGNALS.map((signal) => (
-            <div key={signal} className="intake__trust-item">
-              <Dot color="var(--green)" />
-              {signal}
+          {["Explorium enrichment", "Real-time monday.com CRM", "AI sales chat", "Live board creation"].map(s => (
+            <div key={s} className="intake__trust-item">
+              <Dot color="var(--green)" />{s}
             </div>
           ))}
         </div>

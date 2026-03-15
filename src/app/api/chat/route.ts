@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import type { ChatResponse, RawMessage, ToolUseBlock } from "@/types";
-import { buildSystemPrompt }                           from "@/lib/agents/prompt";
+import type { ChatResponse, RawMessage, ToolUseBlock, EnrichmentResult, CallNotes } from "@/types";
+import { buildSystemPrompt }  from "@/lib/agents/prompt";
 import { AGENT_TOOLS, parseBoardConfig, parseCallNotes, parsePaymentTrigger } from "@/lib/tools/definitions";
 import { createMondayBoard }  from "@/lib/monday/client";
-import { fireN8nEvent }       from "@/lib/n8n/client";
-import { N8N_EVENTS }         from "@/constants";
-import type { EnrichmentResult } from "@/types";
+import { setLeadStatus, writeCallNotes, writePaymentData } from "@/lib/monday/leads";
 
-// ─── Request shape ────────────────────────────────────────────────────────────
-// rawHistory: the FULL Anthropic message array including tool_use / tool_result turns.
-// This is the key fix — without the full history, Claude re-enters qualification
-// on every request because it has no memory of having called save_call_notes.
 interface ChatAPIRequest {
   rawHistory: RawMessage[];
   profile:    EnrichmentResult;
@@ -22,76 +16,66 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 export async function POST(req: NextRequest) {
   try {
     const { rawHistory, profile } = (await req.json()) as ChatAPIRequest;
+    const mondayItemId = profile.mondayItemId ?? "";
 
     const systemPrompt = buildSystemPrompt(profile);
 
-    // ── First LLM call ────────────────────────────────────────────────────────
+    // ── First LLM call ────────────────────────────────────────────────────
     const response = await anthropic.messages.create({
-      model:      "claude-sonnet-4-20250514",
+      model:    "claude-sonnet-4-20250514",
       max_tokens: 1024,
-      system:     systemPrompt,
-      tools:      AGENT_TOOLS as Parameters<typeof anthropic.messages.create>[0]["tools"],
-      messages:   rawHistory as Parameters<typeof anthropic.messages.create>[0]["messages"],
+      system:   systemPrompt,
+      tools:    AGENT_TOOLS as Parameters<typeof anthropic.messages.create>[0]["tools"],
+      messages: rawHistory as Parameters<typeof anthropic.messages.create>[0]["messages"],
     });
 
-    // ── Separate text blocks from tool_use blocks ────────────────────────────
     const toolUseBlocks = response.content.filter(
       (b): b is ToolUseBlock => b.type === "tool_use",
     );
 
     const result: ChatResponse & { rawHistoryAppend: RawMessage[] } = {
-      text:              response.content
-        .filter((b) => b.type === "text")
-        .map((b) => (b as { type: "text"; text: string }).text)
+      text: response.content
+        .filter(b => b.type === "text")
+        .map(b => (b as { type: "text"; text: string }).text)
         .join(""),
       rawHistoryAppend: [],
     };
 
-    // ── No tool calls — return text directly ────────────────────────────────
+    // ── No tools — return immediately ─────────────────────────────────────
     if (toolUseBlocks.length === 0) {
-      // Append the assistant's reply to the raw history the client holds
       result.rawHistoryAppend = [{ role: "assistant", content: result.text }];
       return NextResponse.json(result);
     }
 
-    // ── Tool calls present ────────────────────────────────────────────────────
-    // The raw history for THIS turn must include:
-    //   1. The assistant message with the full content array (text + tool_use blocks)
-    //   2. A user message with the tool_result blocks
-    // Both must be appended together so the client's rawHistory stays consistent.
-
+    // ── Process tool calls ────────────────────────────────────────────────
     const toolResults: Array<{ tool_use_id: string; content: string }> = [];
 
     for (const tool of toolUseBlocks) {
       let toolOutput = "";
 
+      // ── save_call_notes ────────────────────────────────────────────────
       if (tool.name === "save_call_notes") {
         const notes = parseCallNotes(tool.input);
         result.callNotes = notes;
 
-        void fireN8nEvent(N8N_EVENTS.CALL_NOTES_SAVED, {
-          notes,
-          prospect: profile.person.name,
-          company:  profile.company.name,
-        });
+        // Write call notes to monday board + move to "In Conversation"
+        void writeCallNotes(mondayItemId, notes);
+        void setLeadStatus(mondayItemId, "In Conversation");
 
-        toolOutput = JSON.stringify({ success: true, message: "Call notes saved to CRM" });
+        toolOutput = JSON.stringify({ success: true, message: "Notes saved to monday.com" });
       }
 
+      // ── generate_board ─────────────────────────────────────────────────
       else if (tool.name === "generate_board") {
         const boardConfig = parseBoardConfig(tool.input);
         result.boardConfig = boardConfig;
 
+        // Create the real monday.com board
         const mondayResult = await createMondayBoard(boardConfig);
         result.mondayResult = mondayResult;
 
-        void fireN8nEvent(N8N_EVENTS.BOARD_CREATED, {
-          boardName: boardConfig.boardName,
-          boardId:   mondayResult.boardId,
-          boardUrl:  mondayResult.boardUrl,
-          prospect:  profile.person.name,
-          company:   profile.company.name,
-        });
+        // Update lead status → Board Sent
+        void setLeadStatus(mondayItemId, "Board Sent");
 
         toolOutput = JSON.stringify({
           success:       mondayResult.success,
@@ -102,6 +86,7 @@ export async function POST(req: NextRequest) {
         });
       }
 
+      // ── trigger_payment ────────────────────────────────────────────────
       else if (tool.name === "trigger_payment") {
         const payment = parsePaymentTrigger(tool.input, {
           name:    profile.person.name,
@@ -111,45 +96,48 @@ export async function POST(req: NextRequest) {
         payment.industry = profile.company.industry;
         result.paymentTrigger = payment;
 
-        void fireN8nEvent(N8N_EVENTS.PAYMENT_EMAIL, {
-          ...payment,
-          leadScore: profile.meta.leadScore,
+        // Write plan details + payment link to monday, move to "Payment Sent"
+        void writePaymentData({
+          itemId:       mondayItemId,
+          plan:         payment.plan,
+          seats:        payment.seats,
+          monthlyTotal: payment.monthlyTotal,
+          paymentUrl:   payment.stripeUrl,
         });
+        void setLeadStatus(mondayItemId, "Payment Sent");
 
         toolOutput = JSON.stringify({
           success:       true,
           payment_link:  payment.stripeUrl,
           email_sent_to: payment.email,
-          message:       `Payment link sent to ${payment.email}`,
+          message:       `Payment link ready for ${payment.email}`,
         });
       }
 
       toolResults.push({ tool_use_id: tool.id, content: toolOutput });
     }
 
-    // Build the two new raw history entries for the tool turn
+    // ── Build raw history entries for this tool turn ──────────────────────
     const assistantToolTurn: RawMessage = {
       role:    "assistant",
-      // Must pass the full content array (Anthropic requires this for tool_use turns)
       content: response.content as RawMessage["content"],
     };
-
     const toolResultTurn: RawMessage = {
       role: "user",
-      content: toolResults.map((r) => ({
+      content: toolResults.map(r => ({
         type:        "tool_result" as const,
         tool_use_id: r.tool_use_id,
         content:     r.content,
       })),
     };
 
-    // ── Second LLM call — Claude narrates what just happened ─────────────────
+    // ── Second LLM call — Claude narrates the result ──────────────────────
     const followUp = await anthropic.messages.create({
       model:      "claude-sonnet-4-20250514",
       max_tokens: 512,
       system:     systemPrompt,
       tools:      AGENT_TOOLS as Parameters<typeof anthropic.messages.create>[0]["tools"],
-      messages: [
+      messages:   [
         ...rawHistory,
         assistantToolTurn,
         toolResultTurn,
@@ -157,12 +145,10 @@ export async function POST(req: NextRequest) {
     });
 
     result.text = followUp.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
+      .filter(b => b.type === "text")
+      .map(b => (b as { type: "text"; text: string }).text)
       .join("");
 
-    // Return ALL new raw turns so client can append them correctly:
-    // [assistant tool_use turn] + [user tool_result turn] + [assistant follow-up text]
     result.rawHistoryAppend = [
       assistantToolTurn,
       toolResultTurn,
