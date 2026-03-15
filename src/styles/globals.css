@@ -785,3 +785,58 @@ input, textarea, button {
 
 .monday-result a { color: var(--green); text-decoration: none; font-weight: 600; }
 .monday-result a:hover { text-decoration: underline; }
+
+/* ── Responsive: mobile tweaks ───────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .screen {
+    padding: 12px;
+  }
+
+  .screen--chat {
+    padding: 0;
+  }
+
+  .chat-layout {
+    flex-direction: column;
+    height: 100vh;
+    max-width: 100%;
+  }
+
+  .chat-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 14px 12px;
+  }
+
+  .chat-main {
+    border-right: none;
+  }
+
+  .chat-header {
+    padding: 12px 12px;
+    gap: 8px;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .chat-messages {
+    padding: 12px;
+  }
+
+  .message__body {
+    max-width: 100%;
+  }
+
+  .quick-replies {
+    padding: 0 12px 10px;
+  }
+
+  .chat-input-area {
+    padding: 10px 12px 14px;
+  }
+
+  .chat-input-box {
+    padding: 8px 10px;
+  }
+}
