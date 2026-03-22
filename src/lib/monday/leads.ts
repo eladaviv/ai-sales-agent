@@ -85,6 +85,8 @@ type LeadColumnKey =
   // Call / qualification
   | "useCase"
   | "painPoint"
+  | "timeline"
+  | "callNotes"
   | "callStatus"
   // Plan / pricing
   | "plan"
@@ -116,6 +118,8 @@ const REQUIRED_LEAD_COLUMNS: Record<
   // Call / qualification
   useCase:     { fallbackId: MONDAY_COLUMNS.useCase,     title: "Use Case",      columnType: "text" },
   painPoint:   { fallbackId: MONDAY_COLUMNS.painPoint,   title: "Pain Point",    columnType: "text" },
+  timeline:    { fallbackId: MONDAY_COLUMNS.timeline,    title: "Timeline",      columnType: "text" },
+  callNotes:   { fallbackId: MONDAY_COLUMNS.callNotes,   title: "Call Notes",    columnType: "long_text" },
   callStatus:  { fallbackId: MONDAY_COLUMNS.callStatus,  title: "Status",        columnType: "status" },
   // Plan / pricing
   plan:        { fallbackId: MONDAY_COLUMNS.plan,        title: "Plan",          columnType: "text" },
@@ -338,8 +342,8 @@ export async function writeCallNotes(
   const cols = colValues({
     [leadCols.painPoint]:        notes.painPoint,
     [leadCols.useCase]:          notes.useCase,
-    [MONDAY_COLUMNS.timeline]:   notes.decisionTimeline,
-    [MONDAY_COLUMNS.callNotes]:  [
+    [leadCols.timeline]:         notes.decisionTimeline,
+    [leadCols.callNotes]:        [
       `Pain point: ${notes.painPoint}`,
       `Use case: ${notes.useCase}`,
       `Timeline: ${notes.decisionTimeline}`,
